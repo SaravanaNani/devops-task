@@ -7,6 +7,7 @@ pipeline {
         AWS_DEFAULT_REGION = "ap-south-1"
         CLUSTER_NAME = "adq-ecs-cluster"
         SERVICE_NAME = "adq-service"
+        TASK_FAMILY = "adq-task"
     }
 
     stages {
@@ -26,10 +27,38 @@ pipeline {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh """
-                    echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                    echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
                     docker push ${DOCKER_HUB_REPO}:${IMAGE_TAG}
                     """
                 }
+            }
+        }
+
+        stage('Update ECS Task Definition') {
+            steps {
+                script {
+                    // Get the latest task definition JSON
+                    def taskDef = sh (
+                        script: "aws ecs describe-task-definition --task-definition ${TASK_FAMILY} --region ${AWS_DEFAULT_REGION}",
+                        returnStdout: true
+                    ).trim()
+
+                    // Replace the container image with new Docker image
+                    writeFile file: 'taskdef.json', text: taskDef.replaceFirst(
+                        /"image":\\s*".*?"/,
+                        "\"image\":\"${DOCKER_HUB_REPO}:${IMAGE_TAG}\""
+                    )
+                }
+            }
+        }
+
+        stage('Register New Task Definition') {
+            steps {
+                sh """
+                aws ecs register-task-definition \
+                    --cli-input-json file://taskdef.json \
+                    --region ${AWS_DEFAULT_REGION}
+                """
             }
         }
 
@@ -37,12 +66,21 @@ pipeline {
             steps {
                 sh """
                 aws ecs update-service \
-                  --cluster ${CLUSTER_NAME} \
-                  --service ${SERVICE_NAME} \
-                  --force-new-deployment \
-                  --region ${AWS_DEFAULT_REGION}
+                    --cluster ${CLUSTER_NAME} \
+                    --service ${SERVICE_NAME} \
+                    --force-new-deployment \
+                    --region ${AWS_DEFAULT_REGION}
                 """
             }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ Deployment successful: ${DOCKER_HUB_REPO}:${IMAGE_TAG}"
+        }
+        failure {
+            echo "❌ Deployment failed. Check logs."
         }
     }
 }
