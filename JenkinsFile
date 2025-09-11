@@ -41,7 +41,7 @@ pipeline {
         stage('Update ECS Task Definition') {
             steps {
                 withAWS(region: "${AWS_REGION}", credentials: 'aws-jenkins-role') {
-                    sh """
+                    sh '''
                         # Get current task definition JSON
                         aws ecs describe-task-definition --task-definition ${TASK_FAMILY} > task-def.json
                         
@@ -62,7 +62,7 @@ pipeline {
                           --service ${ECS_SERVICE} \
                           --task-definition $NEW_REVISION \
                           --force-new-deployment
-                    """
+                    '''
                 }
             }
         }
