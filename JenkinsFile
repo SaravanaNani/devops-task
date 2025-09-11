@@ -5,7 +5,7 @@ pipeline {
         DOCKER_HUB_REPO = "saravana2002/devops-task"
         IMAGE_TAG = "${env.BUILD_NUMBER}"
         AWS_DEFAULT_REGION = "ap-south-1"
-        CLUSTER_NAME = "adq-cluster"
+        CLUSTER_NAME = "adq-ecs-cluster"
         SERVICE_NAME = "adq-service"
     }
 
