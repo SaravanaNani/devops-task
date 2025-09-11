@@ -2,33 +2,37 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_HUB_REPO = "saravana2002/devops-task"
         IMAGE_TAG = "${env.BUILD_NUMBER}"
-        AWS_DEFAULT_REGION = "ap-south-1"
-        CLUSTER_NAME = "adq-ecs-cluster"
-        SERVICE_NAME = "adq-service"
+        DOCKER_HUB_REPO = "saravana2002/devops-task"
+        AWS_REGION = "ap-south-1"
+        ECS_CLUSTER = "adq-ecs-cluster"
+        ECS_SERVICE = "adq-service"
         TASK_FAMILY = "adq-task"
     }
 
     stages {
-        stage('Checkout') {
+        stage('Checkout Code') {
             steps {
-                git branch: 'main', url: 'https://github.com/SaravanaNani/devops-task.git'
+                git url: 'https://github.com/SaravanaNani/devops-task.git', branch: 'main'
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                sh "docker build -t ${DOCKER_HUB_REPO}:${IMAGE_TAG} ."
+                sh """
+                    docker build -t ${DOCKER_HUB_REPO}:${IMAGE_TAG} .
+                """
             }
         }
 
         stage('Push Docker Image') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', 
+                                                 usernameVariable: 'DOCKER_USER', 
+                                                 passwordVariable: 'DOCKER_PASS')]) {
                     sh """
-                    echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
-                    docker push ${DOCKER_HUB_REPO}:${IMAGE_TAG}
+                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                        docker push ${DOCKER_HUB_REPO}:${IMAGE_TAG}
                     """
                 }
             }
@@ -36,51 +40,40 @@ pipeline {
 
         stage('Update ECS Task Definition') {
             steps {
-                script {
-                    // Get the latest task definition JSON
-                    def taskDef = sh (
-                        script: "aws ecs describe-task-definition --task-definition ${TASK_FAMILY} --region ${AWS_DEFAULT_REGION}",
-                        returnStdout: true
-                    ).trim()
-
-                    // Replace the container image with new Docker image
-                    writeFile file: 'taskdef.json', text: taskDef.replaceFirst(
-                        /"image":\\s*".*?"/,
-                        "\"image\":\"${DOCKER_HUB_REPO}:${IMAGE_TAG}\""
-                    )
+                withAWS(region: "${AWS_REGION}", credentials: 'aws-jenkins-role') {
+                    sh """
+                        # Get current task definition JSON
+                        aws ecs describe-task-definition --task-definition ${TASK_FAMILY} > task-def.json
+                        
+                        # Replace the container image with the new image
+                        cat task-def.json | \
+                          jq --arg IMG "${DOCKER_HUB_REPO}:${IMAGE_TAG}" '.taskDefinition.containerDefinitions[0].image = $IMG' > new-task-def.json
+                        
+                        # Register new task definition
+                        NEW_REVISION=$(aws ecs register-task-definition \
+                          --cli-input-json file://new-task-def.json \
+                          --query 'taskDefinition.taskDefinitionArn' --output text)
+                        
+                        echo "New task definition ARN: $NEW_REVISION"
+                        
+                        # Update ECS service with the new task definition
+                        aws ecs update-service \
+                          --cluster ${ECS_CLUSTER} \
+                          --service ${ECS_SERVICE} \
+                          --task-definition $NEW_REVISION \
+                          --force-new-deployment
+                    """
                 }
-            }
-        }
-
-        stage('Register New Task Definition') {
-            steps {
-                sh """
-                aws ecs register-task-definition \
-                    --cli-input-json file://taskdef.json \
-                    --region ${AWS_DEFAULT_REGION}
-                """
-            }
-        }
-
-        stage('Deploy to ECS') {
-            steps {
-                sh """
-                aws ecs update-service \
-                    --cluster ${CLUSTER_NAME} \
-                    --service ${SERVICE_NAME} \
-                    --force-new-deployment \
-                    --region ${AWS_DEFAULT_REGION}
-                """
             }
         }
     }
 
     post {
         success {
-            echo "✅ Deployment successful: ${DOCKER_HUB_REPO}:${IMAGE_TAG}"
+            echo "Deployment completed successfully! 🎉"
         }
         failure {
-            echo "❌ Deployment failed. Check logs."
+            echo "Pipeline failed ❌"
         }
     }
 }
