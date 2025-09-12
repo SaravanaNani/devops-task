@@ -8,7 +8,7 @@ pipeline {
     environment {
         AWS_DEFAULT_REGION = "ap-south-1"
         TF_WORKDIR = "terraform"
-        DOCKER_IMAGE = "saravana2002/myapp:${BUILD_NUMBER}"
+        DOCKER_IMAGE = "saravana2002/devops-task:${BUILD_NUMBER}"
         CLUSTER_NAME = "devops-task-cluster"   // Update with your ECS cluster name
         SERVICE_NAME = "devops-task-service"       // Update with your ECS service name
     }
