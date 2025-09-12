@@ -238,4 +238,5 @@ Pipeline stages:
 ## Deployment Proof / Screenshot
 
 *ALB URL:* `http://devops-task-alb-385987850.ap-south-1.elb.amazonaws.com/`  
-!./image(21).png  
+<img width="1273" height="669" alt="image" src="https://github.com/user-attachments/assets/7b5fae1c-eddb-4e71-a9c8-9b69d1c164b7" />
+
