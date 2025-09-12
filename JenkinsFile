@@ -2,7 +2,7 @@ pipeline {
     agent {
         docker {
             image 'saravana2002/jenkins-agent:latest'
-            args '-u root:root' // run as root so npm/docker commands work
+            aargs '-u root:root -v /var/run/docker.sock:/var/run/docker.sock'
         }
     }
 
