@@ -2,7 +2,7 @@ pipeline {
     agent {
         docker {
             image 'saravana2002/jenkins-agent:latest'
-            args '-u root:root' // Run as root for npm, docker, terraform commands
+            args '-u root:root' // run as root so npm/docker commands work
         }
     }
 
@@ -33,7 +33,7 @@ pipeline {
             steps {
                 echo "Installing dependencies and running unit tests..."
                 sh 'npm install'
-                sh 'npm test' // make sure package.json has a test script
+                sh 'npm test'
             }
         }
 
@@ -47,25 +47,22 @@ pipeline {
                             sh 'terraform init'
 
                             if (params.TERRAFORM_ACTION == 'apply') {
-                                // Generate plan with BUILD_NUMBER variable
-                                sh "terraform plan -var 'image_tag=${BUILD_NUMBER}' -out=tfplan > tfplan.log || true"
+                                sh "terraform plan -var 'image_tag=${BUILD_NUMBER}' -out=tfplan"
 
-                                // Check if changes exist
-                                def changes = sh(
-                                    script: "grep -q 'No changes. Infrastructure is up-to-date.' tfplan.log || echo 'changes'",
+                                def planOutput = sh(
+                                    script: "terraform show -json tfplan | grep -q 'resource_changes' && echo 'changes' || echo 'no_changes'",
                                     returnStdout: true
                                 ).trim()
 
-                                if (changes == "changes") {
+                                if (planOutput == "changes") {
                                     input message: "Terraform wants to create/update resources. Proceed?", ok: "Yes, Apply"
-                                    // Apply the saved plan WITHOUT -var
                                     sh "terraform apply -auto-approve tfplan"
                                 } else {
                                     echo "No infra changes detected. Skipping apply."
                                 }
                             } else if (params.TERRAFORM_ACTION == 'destroy') {
                                 input message: "Are you sure you want to DESTROY all infra?", ok: "Yes, Destroy"
-                                sh 'terraform destroy -var "image_tag=${BUILD_NUMBER}" -auto-approve'
+                                sh "terraform destroy -var 'image_tag=${BUILD_NUMBER}' -auto-approve"
                             }
                         }
                     }
@@ -114,4 +111,18 @@ pipeline {
             steps {
                 script {
                     def alb_dns = sh(
-                        script: "ter
+                        script: "terraform output -raw alb_dns",
+                        returnStdout: true
+                    ).trim()
+                    echo "Application is accessible at: http://${alb_dns}"
+                    currentBuild.description = "ALB URL: http://${alb_dns}"
+                }
+            }
+        }
+    }
+
+    post {
+        success { echo "Pipeline completed successfully ✅" }
+        failure { echo "Pipeline failed ❌" }
+    }
+}
