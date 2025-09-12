@@ -227,9 +227,6 @@ Pipeline stages:
 
 ### Possible Improvements
 
-- Branch-based deployments (dev → staging, main → production)  
-- CI/CD testing with automated unit tests and SonarQube checks  
-- Store Terraform state in S3 with DynamoDB locking for team collaboration  
 - Enable HTTPS for ALB using ACM certificates  
 - CloudWatch dashboards for real-time metrics monitoring  
 
