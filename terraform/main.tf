@@ -1,44 +1,88 @@
+terraform {
+  required_providers {
+    aws = { source = "hashicorp/aws" }
+  }
+  required_version = ">= 1.0"
+}
+
 provider "aws" {
-  region = "ap-south-1"
+  region = var.aws_region
 }
 
-# VPC
+data "aws_availability_zones" "azs" {}
+
 module "vpc" {
-  source   = "./modules/vpc"
-  vpc_cidr = "10.0.0.0/16"
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "5.5.2"
+
+  name = "${var.project}-vpc"
+  cidr = "10.0.0.0/16"
+
+  azs            = slice(data.aws_availability_zones.azs.names, 0, 2)
+  public_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
+
+  enable_nat_gateway = false
 }
 
-# Security Group
-module "sg" {
-  source        = "./modules/security-group"
-  vpc_id        = module.vpc.vpc_id
-  allowed_ports = [22, 80, 443]
+# Security groups
+resource "aws_security_group" "alb_sg" {
+  name   = "${var.project}-alb-sg"
+  vpc_id = module.vpc.vpc_id
+
+  ingress {
+    description = "HTTP"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 }
 
-# ECS Cluster
-module "ecs_cluster" {
-  source       = "./modules/ecs-cluster"
-  cluster_name = "adq-ecs-cluster"
+resource "aws_security_group" "ecs_tasks_sg" {
+  name   = "${var.project}-tasks-sg"
+  vpc_id = module.vpc.vpc_id
+
+  ingress {
+    description     = "Allow ALB to reach tasks"
+    from_port       = var.container_port
+    to_port         = var.container_port
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb_sg.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 }
 
 # ALB
-module "alb" {
-  source         = "./modules/alb"
-  vpc_id         = module.vpc.vpc_id
-  public_subnets = module.vpc.public_subnets
-  sg_id          = module.sg.sg_id
-  alb_name       = "adq-alb"
+resource "aws_lb" "alb" {
+  name               = "${var.project}-alb"
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb_sg.id]
+  subnets            = module.vpc.public_subnets
 }
 
-# ECS Service + Task
-module "ecs_service" {
-  source               = "./modules/ecs-service"
-  cluster_id           = module.ecs_cluster.cluster_id
-  cluster_name         = module.ecs_cluster.cluster_name
-  subnets              = module.vpc.public_subnets
-  sg_id                = module.sg.sg_id
-  container_port       = 3000
-  desired_count        = 1
-  alb_target_group_arn = module.alb.target_group_arn
-  docker_image         = "saravana2002/devops-task:latest" # DockerHub image
-}
+resource "aws_lb_target_group" "tg" {
+  name        = "${var.project}-tg"
+  port        = var.container_port
+  protocol    = "HTTP"
+  vpc_id      = module.vpc.vpc_id
+  target_type = "ip"
+
+  health_check {
+    path                = var.health_path
+    protocol            = "HTTP"
+    interval            = 30
+    timeout             = 5
+    h
