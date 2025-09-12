@@ -9,8 +9,8 @@ pipeline {
         AWS_DEFAULT_REGION = "ap-south-1"
         TF_WORKDIR        = "terraform"
         DOCKER_IMAGE      = "saravana2002/devops-task:${BUILD_NUMBER}"
-        CLUSTER_NAME      = "devops-task-cluster"   // Update with your ECS cluster name
-        SERVICE_NAME      = "devops-task-service"   // Update with your ECS service name
+        CLUSTER_NAME      = "devops-task-cluster"
+        SERVICE_NAME      = "devops-task-service"
     }
 
     stages {
@@ -26,21 +26,23 @@ pipeline {
                 dir("${TF_WORKDIR}") {
                     script {
                         if (params.TERRAFORM_ACTION == 'skip') {
-                            echo "Skipping Terraform stage as requested."
-                        } else if (params.TERRAFORM_ACTION == 'apply') {
+                            echo "Skipping Terraform stage."
+                        } else {
                             sh "terraform init"
-                            sh "terraform plan -var 'image_tag=${BUILD_NUMBER}' -out=tfplan > tfplan.log || true"
 
-                            def changes = sh(script: "grep -q 'No changes. Infrastructure is up-to-date.' tfplan.log || echo 'changes'", returnStdout: true).trim()
-                            if (changes == "changes") {
-                                input message: "Terraform wants to create/update resources. Proceed with apply?", ok: "Yes, Apply"
-                                sh "terraform apply -var 'image_tag=${BUILD_NUMBER}' -auto-approve tfplan"
-                            } else {
-                                echo "No infra changes detected. Skipping apply."
+                            if (params.TERRAFORM_ACTION == 'apply') {
+                                sh "terraform plan -var 'image_tag=${BUILD_NUMBER}' -out=tfplan > tfplan.log || true"
+                                def changes = sh(script: "grep -q 'No changes. Infrastructure is up-to-date.' tfplan.log || echo 'changes'", returnStdout: true).trim()
+                                if (changes == "changes") {
+                                    input message: "Terraform wants to create/update resources. Proceed?", ok: "Yes, Apply"
+                                    sh "terraform apply -var 'image_tag=${BUILD_NUMBER}' -auto-approve tfplan"
+                                } else {
+                                    echo "No infra changes detected."
+                                }
+                            } else if (params.TERRAFORM_ACTION == 'destroy') {
+                                input message: "Are you sure you want to DESTROY all infra?", ok: "Yes, Destroy"
+                                sh "terraform destroy -var 'image_tag=${BUILD_NUMBER}' -auto-approve"
                             }
-                        } else if (params.TERRAFORM_ACTION == 'destroy') {
-                            input message: "Are you sure you want to DESTROY all infra?", ok: "Yes, Destroy"
-                            sh "terraform destroy -var 'image_tag=${BUILD_NUMBER}' -auto-approve"
                         }
                     }
                 }
@@ -54,7 +56,7 @@ pipeline {
             }
         }
 
-        stage('Push to DockerHub') {
+        stage('Push Docker Image') {
             when { expression { params.TERRAFORM_ACTION != 'destroy' } }
             steps {
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
@@ -71,20 +73,26 @@ pipeline {
             steps {
                 sh """
                     aws ecs update-service \
-                        --cluster ${env.CLUSTER_NAME} \
-                        --service ${env.SERVICE_NAME} \
+                        --cluster ${CLUSTER_NAME} \
+                        --service ${SERVICE_NAME} \
                         --force-new-deployment
                 """
+            }
+        }
+
+        stage('Fetch ALB DNS') {
+            when { expression { params.TERRAFORM_ACTION != 'destroy' } }
+            steps {
+                script {
+                    def alb_dns = sh(script: "terraform output -raw alb_dns", returnStdout: true).trim()
+                    echo "ALB DNS: http://${alb_dns}"
+                }
             }
         }
     }
 
     post {
-        success {
-            echo "Pipeline completed successfully ✅"
-        }
-        failure {
-            echo "Pipeline failed ❌"
-        }
+        success { echo "Pipeline completed successfully ✅" }
+        failure { echo "Pipeline failed ❌" }
     }
 }
