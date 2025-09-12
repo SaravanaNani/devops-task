@@ -11,9 +11,7 @@ provider "aws" {
 
 data "aws_availability_zones" "azs" {}
 
-# ----------------------------
 # VPC
-# ----------------------------
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "5.5.2"
@@ -27,9 +25,9 @@ module "vpc" {
   enable_nat_gateway = false
 }
 
-# ----------------------------
+
 # Security Groups
-# ----------------------------
+
 resource "aws_security_group" "alb_sg" {
   name   = "${var.project}-alb-sg"
   vpc_id = module.vpc.vpc_id
@@ -70,9 +68,8 @@ resource "aws_security_group" "ecs_tasks_sg" {
   }
 }
 
-# ----------------------------
 # ALB + Target Group + Listener
-# ----------------------------
+
 resource "aws_lb" "alb" {
   name               = "${var.project}-alb"
   load_balancer_type = "application"
