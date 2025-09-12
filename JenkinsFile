@@ -62,7 +62,7 @@ pipeline {
                                 }
                             } else if (params.TERRAFORM_ACTION == 'destroy') {
                                 input message: "Are you sure you want to DESTROY all infra?", ok: "Yes, Destroy"
-                                sh "terraform destroy -var 'image_tag=${BUILD_NUMBER}' -auto-approve"
+                                sh "terraform destroy  -auto-approve"
                             }
                         }
                     }
