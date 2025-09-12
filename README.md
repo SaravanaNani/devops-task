@@ -227,9 +227,28 @@ Pipeline stages:
 
 ### Possible Improvements
 
-- CI/CD testing with automated unit tests and SonarQube checks  
-- Enable HTTPS for ALB using ACM certificates  
-- CloudWatch dashboards for real-time metrics monitoring  
+## Possible Improvements
+
+1. **Branch-Based Deployments**  
+   Automate deployments per branch (`dev` → staging, `main` → production) to support multiple environments.
+
+2. **CI/CD Testing Enhancements**  
+   Add automated **unit tests** for the Node.js application and integrate **SonarQube** for code quality checks and vulnerability scanning.
+
+3. **Terraform State Management**  
+   Currently using S3 backend; adding a **DynamoDB table for state locking** would prevent concurrent modifications during team collaboration.
+
+4. **Secure ALB Traffic**  
+   Enable **HTTPS** using **AWS ACM certificates** to encrypt traffic to the application.
+
+5. **Monitoring & Alerts**  
+   Create **CloudWatch dashboards** and configure alarms for ECS metrics (CPU, memory, etc.) for proactive monitoring.
+
+6. **Infrastructure as Code Enhancements**  
+   Modularize Terraform code and create **reusable modules** for VPC, ECS, ALB, and AutoScaling for better maintainability and scalability.
+
+7. **Automated Rollbacks**  
+   Implement automated rollback in the pipeline if deployment fails, allowing ECS tasks to revert to the previous stable version.
 
 ---
 
