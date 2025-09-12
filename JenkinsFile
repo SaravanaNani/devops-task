@@ -10,7 +10,7 @@ pipeline {
         TF_WORKDIR = "terraform"
         DOCKER_IMAGE = "saravana2002/devops-task:${BUILD_NUMBER}"
         CLUSTER_NAME = "devops-task-cluster"   // Update with your ECS cluster name
-        SERVICE_NAME = "devops-task-service"       // Update with your ECS service name
+        SERVICE_NAME = "devops-task-service"   // Update with your ECS service name
     }
 
     stages {
@@ -31,13 +31,13 @@ pipeline {
                             sh 'terraform init'
 
                             if (params.TERRAFORM_ACTION == 'apply') {
-                                sh 'terraform plan -out=tfplan > tfplan.log || true'
-                                
+                                sh "terraform plan -var 'image_tag=${BUILD_NUMBER}' -out=tfplan > tfplan.log || true"
+
                                 // Ask for approval if there are changes
                                 def changes = sh(script: "grep -q 'No changes. Infrastructure is up-to-date.' tfplan.log || echo 'changes'", returnStdout: true).trim()
                                 if (changes == "changes") {
                                     input message: "Terraform wants to create/update resources. Proceed with apply?", ok: "Yes, Apply"
-                                    sh 'terraform apply -auto-approve tfplan'
+                                    sh "terraform apply -var 'image_tag=${BUILD_NUMBER}' -auto-approve tfplan"
                                 } else {
                                     echo "No infra changes detected. Skipping apply."
                                 }
