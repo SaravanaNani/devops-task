@@ -7,10 +7,10 @@ pipeline {
 
     environment {
         AWS_DEFAULT_REGION = "ap-south-1"
-        TF_WORKDIR = "terraform"
-        DOCKER_IMAGE = "saravana2002/devops-task:${BUILD_NUMBER}"
-        CLUSTER_NAME = "devops-task-cluster"   // Update with your ECS cluster name
-        SERVICE_NAME = "devops-task-service"   // Update with your ECS service name
+        TF_WORKDIR        = "terraform"
+        DOCKER_IMAGE      = "saravana2002/devops-task:${BUILD_NUMBER}"
+        CLUSTER_NAME      = "devops-task-cluster"   // Update with your ECS cluster name
+        SERVICE_NAME      = "devops-task-service"   // Update with your ECS service name
     }
 
     stages {
@@ -27,24 +27,20 @@ pipeline {
                     script {
                         if (params.TERRAFORM_ACTION == 'skip') {
                             echo "Skipping Terraform stage as requested."
-                        } else {
-                            sh 'terraform init'
+                        } else if (params.TERRAFORM_ACTION == 'apply') {
+                            sh "terraform init"
+                            sh "terraform plan -var 'image_tag=${BUILD_NUMBER}' -out=tfplan > tfplan.log || true"
 
-                            if (params.TERRAFORM_ACTION == 'apply') {
-                                sh "terraform plan -var 'image_tag=${BUILD_NUMBER}' -out=tfplan > tfplan.log || true"
-
-                                // Ask for approval if there are changes
-                                def changes = sh(script: "grep -q 'No changes. Infrastructure is up-to-date.' tfplan.log || echo 'changes'", returnStdout: true).trim()
-                                if (changes == "changes") {
-                                    input message: "Terraform wants to create/update resources. Proceed with apply?", ok: "Yes, Apply"
-                                    sh "terraform apply -var 'image_tag=${BUILD_NUMBER}' -auto-approve tfplan"
-                                } else {
-                                    echo "No infra changes detected. Skipping apply."
-                                }
-                            } else if (params.TERRAFORM_ACTION == 'destroy') {
-                                input message: "Are you sure you want to DESTROY all infra?", ok: "Yes, Destroy"
-                                sh 'terraform destroy -auto-approve'
+                            def changes = sh(script: "grep -q 'No changes. Infrastructure is up-to-date.' tfplan.log || echo 'changes'", returnStdout: true).trim()
+                            if (changes == "changes") {
+                                input message: "Terraform wants to create/update resources. Proceed with apply?", ok: "Yes, Apply"
+                                sh "terraform apply -var 'image_tag=${BUILD_NUMBER}' -auto-approve tfplan"
+                            } else {
+                                echo "No infra changes detected. Skipping apply."
                             }
+                        } else if (params.TERRAFORM_ACTION == 'destroy') {
+                            input message: "Are you sure you want to DESTROY all infra?", ok: "Yes, Destroy"
+                            sh "terraform destroy -var 'image_tag=${BUILD_NUMBER}' -auto-approve"
                         }
                     }
                 }
