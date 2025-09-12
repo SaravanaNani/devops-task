@@ -1,139 +1,208 @@
-# DevOps CI/CD Setup – Jenkins, Docker, Terraform, ECS
+# DevOps CI/CD Pipeline Setup with Jenkins, Terraform, and AWS ECS
 
-## Overview
-
-This project demonstrates a full DevOps pipeline setup using Jenkins, Docker, Terraform, and AWS ECS. The goal was to automate infrastructure provisioning and application deployment with proper monitoring, scaling, and CI/CD triggers.
+This project demonstrates a full CI/CD pipeline using **Jenkins**, **Terraform**, **Docker**, and **AWS ECS**, with proper role-based access, CloudWatch monitoring, and AutoScaling.
 
 ---
 
-## Infrastructure Setup (Terraform)
+## Prerequisites
 
-We used Terraform to provision the AWS infrastructure:
+1. **Jenkins VM Setup**
 
-- **VPC**: Created a default VPC with public subnets, internet gateway, and route tables.  
-- **Security Groups**: Opened all ports for the Jenkins VM; ECS tasks security group and ALB security group configured.  
-- **ECS Cluster & Service**: ECS cluster `devops-task-cluster` created, service `devops-task-service` deployed with Docker image.  
-- **Load Balancer**: Application Load Balancer created for external access with listener and target group.  
-- **CloudWatch Logs**: Created a log group `/ecs/devops-task` for ECS task logs with retention policies.  
-- **AutoScaling**: Configured ECS service auto-scaling with CloudWatch metrics.
+   We have created a Jenkins VM using Ubuntu and installed required dependencies:
 
-**Terraform Flow in Jenkins**:
+   ```bash
+   sudo apt update && sudo apt upgrade -y
+   sudo apt install -y openjdk-17-jdk docker.io curl git
+   java -version
 
-1. Terraform `init` → initializes working directory.  
-2. Terraform `plan` → generates execution plan, detects changes.  
-3. Terraform `apply` → applies changes (creates/updates infra).  
-4. Terraform `destroy` → destroys infra (optional).  
-5. Manual approvals implemented in Jenkins pipeline before `apply` or `destroy`.
+   # Jenkins installation
+   curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io.key | sudo tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
+   echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" | sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
+   sudo apt update
+   sudo apt install -y jenkins
+   sudo systemctl enable jenkins
+   sudo systemctl start jenkins
+   jenkins --version  # 2.516.2
+   ```
+
+   Add current user to Docker group to allow Docker commands without sudo:
+
+   ```bash
+   sudo usermod -aG docker $USER
+   sudo systemctl enable docker
+   sudo systemctl start docker
+   ```
+
+2. **IAM Role: `jenkins-terraform-role`**
+
+   The Jenkins VM is attached to a role with both **AWS managed** and **custom policies** for CI/CD operations.
+
+   **Managed Policies:**
+
+   * AmazonEC2FullAccess
+   * AmazonECS\_FullAccess
+   * AmazonS3FullAccess
+   * AutoScalingFullAccess
+   * IAMFullAccess
+
+   **Custom Policies:**
+
+   * **JenkinsTerraformCloudWatchPolicy**
+
+     ```json
+     {
+         "Version": "2012-10-17",
+         "Statement": [
+             {
+                 "Effect": "Allow",
+                 "Action": [
+                     "logs:CreateLogGroup",
+                     "logs:CreateLogStream",
+                     "logs:PutLogEvents",
+                     "logs:PutRetentionPolicy",
+                     "logs:ListTagsForResource",
+                     "logs:DeleteLogGroup"
+                 ],
+                 "Resource": "*"
+             }
+         ]
+     }
+     ```
+
+   * **CustomECSApplicationAutoScalingPolicy**
+
+     ```json
+     {
+         "Version": "2012-10-17",
+         "Statement": [
+             {
+                 "Effect": "Allow",
+                 "Action": [
+                     "application-autoscaling:RegisterScalableTarget",
+                     "application-autoscaling:DeregisterScalableTarget",
+                     "application-autoscaling:PutScalingPolicy",
+                     "application-autoscaling:DeleteScalingPolicy",
+                     "application-autoscaling:DescribeScalableTargets",
+                     "application-autoscaling:DescribeScalingPolicies",
+                     "application-autoscaling:DescribeScalingActivities",
+                     "application-autoscaling:ListTagsForResource",
+                     "ecs:UpdateService",
+                     "ecs:DescribeServices",
+                     "cloudwatch:PutMetricAlarm",
+                     "cloudwatch:DeleteAlarms",
+                     "cloudwatch:DescribeAlarms"
+                 ],
+                 "Resource": "*"
+             }
+         ]
+     }
+     ```
 
 ---
 
-## Jenkins Setup
+## Jenkins Docker Agent
 
-- Installed Jenkins (v2.516.2) on an Ubuntu VM.  
-- Installed Docker on Jenkins VM and added user to `docker` group.  
-- Jenkins uses **Docker containers as agents** to run builds and deployments. This ensures a clean and isolated environment for pipeline execution.
+We use a **custom Docker container** as a Jenkins agent to standardize the CI/CD environment.
 
-**Pipeline Features**:
+**Dockerfile Highlights:**
 
-1. **Checkout**: Pulls code from GitHub.  
-2. **Build & Test**: Runs `npm install` and `npm test`.  
-3. **Terraform**: Provisions infra with manual approvals for changes or destruction.  
-4. **Docker Build & Push**: Builds Docker image tagged `latest` and pushes to DockerHub.  
-5. **Deploy to ECS**: Forces ECS service to redeploy with new image.  
-6. **Fetch ALB DNS**: Displays application URL in Jenkins console and build description.
+```dockerfile
+FROM ubuntu:22.04
+ENV DEBIAN_FRONTEND=noninteractive
 
----
+RUN apt-get update && apt-get install -y \
+    openjdk-17-jdk curl git unzip python3 python3-pip docker.io nodejs npm sudo ssh
 
-## IAM Role & Policies
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV PATH="$JAVA_HOME/bin:$PATH:/workspace/node_modules/.bin"
 
-Jenkins VM assumes the role **`jenkins-terraform-role`** with attached policies:
+ARG TERRAFORM_VERSION=1.6.0
+RUN curl -fsSL https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip -o terraform.zip \
+    && unzip terraform.zip \
+    && mv terraform /usr/local/bin/ \
+    && rm terraform.zip
 
-### Custom Policies
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" \
+    && unzip awscliv2.zip \
+    && ./aws/install \
+    && rm -rf awscliv2.zip aws
 
-**1. JenkinsTerraformCloudWatchPolicy**
+RUN useradd -m -d /var/lib/jenkins -s /bin/bash jenkins \
+    && echo 'jenkins:jenkins' | chpasswd \
+    && echo 'jenkins ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
 
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "logs:CreateLogGroup",
-        "logs:CreateLogStream",
-        "logs:PutLogEvents",
-        "logs:PutRetentionPolicy",
-        "logs:ListTagsForResource",
-        "logs:DeleteLogGroup"
-      ],
-      "Resource": "*"
-    }
-  ]
-}
+WORKDIR /workspace
+USER jenkins
+CMD ["bash"]
 ```
 
-**2. CustomECSApplicationAutoScalingPolicy**
+* **Purpose:** Provides a reproducible build environment including Java, Node.js, Python, Terraform, Docker, and AWS CLI.
+* **Docker Agent Image Workflow:**
 
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "application-autoscaling:RegisterScalableTarget",
-        "application-autoscaling:DeregisterScalableTarget",
-        "application-autoscaling:PutScalingPolicy",
-        "application-autoscaling:DeleteScalingPolicy",
-        "application-autoscaling:DescribeScalableTargets",
-        "application-autoscaling:DescribeScalingPolicies",
-        "application-autoscaling:DescribeScalingActivities",
-        "application-autoscaling:ListTagsForResource",
-        "ecs:UpdateService",
-        "ecs:DescribeServices",
-        "cloudwatch:PutMetricAlarm",
-        "cloudwatch:DeleteAlarms",
-        "cloudwatch:DescribeAlarms"
-      ],
-      "Resource": "*"
-    }
-  ]
-}
-```
+  1. Build the agent image locally:
 
-### Attached Managed Policies
+     ```bash
+     docker build -t saravana2002/jenkins-agent:latest .
+     ```
+  2. Push the image to Docker Hub:
 
-- `AmazonEC2FullAccess`  
-- `AmazonECS_FullAccess`  
-- `AmazonS3FullAccess`  
-- `AutoScalingFullAccess`  
-- `IAMFullAccess`  
+     ```bash
+     docker push saravana2002/jenkins-agent:latest
+     ```
+  3. Use the image in Jenkins pipeline as agent:
 
-This combination ensures Jenkins can provision infra, manage ECS deployments, configure AutoScaling, and send logs to CloudWatch.
+     ```groovy
+     agent {
+         docker {
+             image 'saravana2002/jenkins-agent:latest'
+             args '-u root:root -v /var/run/docker.sock:/var/run/docker.sock'
+         }
+     }
+     ```
 
 ---
 
-## CloudWatch & AutoScaling
+## Terraform Infrastructure
 
-- ECS logs are sent to CloudWatch log group `/ecs/devops-task`.  
-- AutoScaling policies ensure ECS service scales automatically based on CloudWatch metrics.  
-- CloudWatch Alarms monitor ECS metrics and trigger scaling actions.
+The pipeline uses **Terraform** to provision:
+
+* VPC, subnets, and default security groups
+* Internet Gateway & Route Tables
+* ECS Cluster and Task Definition
+* Application Load Balancer with Target Group
+* CloudWatch Log Group for ECS logs
+* AutoScaling Policies for ECS service
+
+**CloudWatch & AutoScaling:**
+
+* ECS tasks are configured to push logs to CloudWatch.
+* AutoScaling monitors ECS metrics and scales the service based on CPU/Memory or custom CloudWatch alarms.
 
 ---
 
-## Webhooks (CI/CD Trigger)
+## Jenkins CI/CD Pipeline
 
-- GitHub webhooks can be configured to trigger Jenkins pipelines automatically on push/PR events.  
-- Ensures full CI/CD automation without manual intervention.
+Pipeline stages:
+
+1. **Checkout** – Pulls code from GitHub.
+2. **Build & Test** – Installs dependencies and runs unit tests.
+3. **Terraform** – Initializes, plans, applies, or destroys infrastructure based on parameters.
+4. **Build Docker Image** – Builds Docker image with `latest` tag.
+5. **Push to DockerHub** – Pushes Docker image to DockerHub for agent use.
+6. **Deploy to ECS** – Updates ECS service forcing a new deployment.
+7. **Fetch ALB DNS** – Outputs the ALB DNS URL for verification.
+
+**Webhooks:**
+
+* GitHub webhooks trigger the pipeline automatically when code changes are pushed to the repository.
 
 ---
 
 ## Summary
 
-- Jenkins VM deployed with Docker and proper IAM role.  
-- Terraform code provisions VPC, ECS, ALB, Security Groups, CloudWatch logs, and AutoScaling.  
-- Jenkins pipeline handles build, test, Docker image push, and ECS deployment.  
-- CloudWatch and AutoScaling are fully integrated.  
-- Webhook integration supports automatic CI/CD triggers.
+* Jenkins VM with attached **IAM role** allows full CI/CD operations.
+* Docker agent ensures reproducible environment for Terraform, Docker, and AWS commands.
+* CloudWatch collects ECS logs; AutoScaling manages ECS service scaling.
+* CI/CD pipeline is fully automated, triggered by GitHub commits or manual runs.
 
-**Application is accessible via the ALB DNS displayed in Jenkins after deployment.**
+---
