@@ -47,6 +47,7 @@ pipeline {
                             sh 'terraform init'
 
                             if (params.TERRAFORM_ACTION == 'apply') {
+                                // Automatically inject image_tag = latest
                                 sh "terraform plan -var 'image_tag=latest' -out=tfplan"
 
                                 def planOutput = sh(
