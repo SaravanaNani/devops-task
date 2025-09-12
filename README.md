@@ -36,16 +36,13 @@ This project demonstrates a full CI/CD pipeline using **Jenkins**, **Terraform**
 
 2. **S3 Bucket for Terraform State**
 
-   Terraform uses a remote backend to store state for safe collaboration. Ensure you have created an **S3 bucket** and **DynamoDB table** for state locking:
-
+   Terraform uses a remote backend to store state for safe collaboration. Ensure you have created an **S3 bucket**
    ```hcl
    terraform {
      backend "s3" {
        bucket         = "<your-terraform-state-bucket>"
        key            = "terraform.tfstate"
        region         = "ap-south-1"
-       dynamodb_table = "<your-lock-table>"
-       encrypt        = true
      }
    }
    ```
@@ -240,5 +237,5 @@ Pipeline stages:
 
 ## Deployment Proof / Screenshot
 
-*ALB URL:* `http://<your-alb-dns>`  
+*ALB URL:* `http://devops-task-alb-385987850.ap-south-1.elb.amazonaws.com/`  
 ![Deployment Screenshot](./deployment-screenshot.png)  
