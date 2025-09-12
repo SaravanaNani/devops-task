@@ -18,10 +18,10 @@ module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "5.5.2"
 
-  name            = "${var.project}-vpc"
-  cidr            = "10.0.0.0/16"
-  azs             = slice(data.aws_availability_zones.azs.names, 0, 2)
-  public_subnets  = ["10.0.1.0/24", "10.0.2.0/24"]
+  name               = "${var.project}-vpc"
+  cidr               = "10.0.0.0/16"
+  azs                = slice(data.aws_availability_zones.azs.names, 0, 2)
+  public_subnets     = ["10.0.1.0/24", "10.0.2.0/24"]
   enable_nat_gateway = false
 }
 
@@ -112,6 +112,14 @@ resource "aws_ecs_cluster" "this" {
 }
 
 # -----------------------------
+# CloudWatch Logs Group
+# -----------------------------
+resource "aws_cloudwatch_log_group" "ecs" {
+  name              = "/ecs/${var.project}"
+  retention_in_days = 7
+}
+
+# -----------------------------
 # ECS Task Execution Role
 # -----------------------------
 resource "aws_iam_role" "ecs_task_execution_role" {
@@ -154,9 +162,9 @@ resource "aws_ecs_task_definition" "app" {
     logConfiguration = {
       logDriver = "awslogs"
       options = {
-        "awslogs-group"         = "/ecs/${var.project}"
-        "awslogs-region"        = var.aws_region
-        "awslogs-stream-prefix" = "ecs"
+        awslogs-group         = aws_cloudwatch_log_group.ecs.name
+        awslogs-region        = var.aws_region
+        awslogs-stream-prefix = "ecs"
       }
     }
   }])
