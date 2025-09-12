@@ -11,29 +11,28 @@ provider "aws" {
 
 data "aws_availability_zones" "azs" {}
 
+# -----------------------------
 # VPC
+# -----------------------------
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "5.5.2"
 
-  name = "${var.project}-vpc"
-  cidr = "10.0.0.0/16"
-
-  azs            = slice(data.aws_availability_zones.azs.names, 0, 2)
-  public_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
-
+  name            = "${var.project}-vpc"
+  cidr            = "10.0.0.0/16"
+  azs             = slice(data.aws_availability_zones.azs.names, 0, 2)
+  public_subnets  = ["10.0.1.0/24", "10.0.2.0/24"]
   enable_nat_gateway = false
 }
 
-
+# -----------------------------
 # Security Groups
-
+# -----------------------------
 resource "aws_security_group" "alb_sg" {
   name   = "${var.project}-alb-sg"
   vpc_id = module.vpc.vpc_id
 
   ingress {
-    description = "Allow HTTP"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
@@ -53,7 +52,6 @@ resource "aws_security_group" "ecs_tasks_sg" {
   vpc_id = module.vpc.vpc_id
 
   ingress {
-    description     = "Allow ALB to reach tasks"
     from_port       = var.container_port
     to_port         = var.container_port
     protocol        = "tcp"
@@ -68,8 +66,9 @@ resource "aws_security_group" "ecs_tasks_sg" {
   }
 }
 
+# -----------------------------
 # ALB + Target Group + Listener
-
+# -----------------------------
 resource "aws_lb" "alb" {
   name               = "${var.project}-alb"
   load_balancer_type = "application"
@@ -105,27 +104,25 @@ resource "aws_lb_listener" "listener" {
   }
 }
 
-# ----------------------------
+# -----------------------------
 # ECS Cluster
-# ----------------------------
+# -----------------------------
 resource "aws_ecs_cluster" "this" {
   name = "${var.project}-cluster"
 }
 
-# ----------------------------
-# IAM Role for ECS task execution
-# ----------------------------
+# -----------------------------
+# ECS Task Execution Role
+# -----------------------------
 resource "aws_iam_role" "ecs_task_execution_role" {
   name = "${var.project}-ecs-task-execution-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "ecs-tasks.amazonaws.com"
-      }
-      Action = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+      Action    = "sts:AssumeRole"
     }]
   })
 }
@@ -135,9 +132,9 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution_role_policy" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-# ----------------------------
+# -----------------------------
 # ECS Task Definition
-# ----------------------------
+# -----------------------------
 resource "aws_ecs_task_definition" "app" {
   family                   = "${var.project}-task"
   network_mode             = "awsvpc"
@@ -154,18 +151,26 @@ resource "aws_ecs_task_definition" "app" {
       hostPort      = var.container_port
       protocol      = "tcp"
     }]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = "/ecs/${var.project}"
+        "awslogs-region"        = var.aws_region
+        "awslogs-stream-prefix" = "ecs"
+      }
+    }
   }])
 }
 
-# ----------------------------
-# ECS Service
-# ----------------------------
+# -----------------------------
+# ECS Service + Auto Scaling
+# -----------------------------
 resource "aws_ecs_service" "app" {
   name            = "${var.project}-service"
   cluster         = aws_ecs_cluster.this.id
   task_definition = aws_ecs_task_definition.app.arn
   launch_type     = "FARGATE"
-  desired_count   = 1
+  desired_count   = var.min_capacity
 
   network_configuration {
     subnets          = module.vpc.public_subnets
@@ -180,4 +185,33 @@ resource "aws_ecs_service" "app" {
   }
 
   depends_on = [aws_lb_listener.listener]
+}
+
+resource "aws_appautoscaling_target" "ecs_target" {
+  max_capacity       = var.max_capacity
+  min_capacity       = var.min_capacity
+  resource_id        = "service/${aws_ecs_cluster.this.name}/${aws_ecs_service.app.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  service_namespace  = "ecs"
+}
+
+resource "aws_appautoscaling_policy" "cpu_scale_out" {
+  name               = "${var.project}-cpu-scale-out"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.ecs_target.resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs_target.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.ecs_target.service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    target_value       = 50.0
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+    scale_in_cooldown  = 60
+    scale_out_cooldown = 60
+  }
+}
+
+output "alb_dns" {
+  value = aws_lb.alb.dns_name
 }
