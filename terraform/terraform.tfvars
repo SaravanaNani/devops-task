@@ -5,6 +5,6 @@ container_port = 3000
 health_path    = "/"
 cpu            = 256
 memory         = 512
-image_tag      = "latest"       
+image_tag      = "latest"
 min_capacity   = 1
 max_capacity   = 3
