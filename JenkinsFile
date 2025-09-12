@@ -1,10 +1,15 @@
 pipeline {
-    agent any
+    agent {
+        docker {
+            image 'saravana2002/jenkins-agent:latest'
+            args '-u root:root'  // run as root so npm/docker commands work
+        }
+    }
 
     parameters {
         choice(
             name: 'TERRAFORM_ACTION', 
-            choices: ['apply', 'destroy', 'skip'], 
+            choices: ['apply','destroy','skip'], 
             description: 'Choose Terraform action'
         )
     }
@@ -20,8 +25,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                git branch: 'main',
-                    url: 'https://github.com/SaravanaNani/devops-task.git'
+                git branch: 'main', url: 'https://github.com/SaravanaNani/devops-task.git'
             }
         }
 
@@ -118,11 +122,7 @@ pipeline {
     }
 
     post {
-        success {
-            echo "Pipeline completed successfully ✅"
-        }
-        failure {
-            echo "Pipeline failed ❌"
-        }
+        success { echo "Pipeline completed successfully ✅" }
+        failure { echo "Pipeline failed ❌" }
     }
 }
