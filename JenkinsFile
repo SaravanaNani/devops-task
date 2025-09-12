@@ -2,90 +2,90 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_TAG = "${env.BUILD_NUMBER}"
-        DOCKER_HUB_REPO = "saravana2002/devops-task"
-        AWS_REGION = "ap-south-1"
-        ECS_CLUSTER = "adq-ecs-cluster"
-        ECS_SERVICE = "adq-service"
-        TASK_FAMILY = "adq-task"
+        AWS_DEFAULT_REGION = "ap-south-1"
+        TF_WORKDIR = "terraform" 
+        DOCKER_IMAGE = "saravana2002/myapp:${BUILD_NUMBER}"
     }
 
     stages {
-        stage('Checkout Code') {
+        stage('Checkout') {
             steps {
-                git url: 'https://github.com/SaravanaNani/devops-task.git', branch: 'main'
+                git branch: 'main',
+                    url: 'https://github.com/SaravanaNani/devops-task.git'
+            }
+        }
+
+        stage('Terraform Init') {
+            steps {
+                dir("${TF_WORKDIR}") {
+                    sh 'terraform init'
+                }
+            }
+        }
+
+        stage('Terraform Plan') {
+            steps {
+                dir("${TF_WORKDIR}") {
+                    sh 'terraform plan -out=tfplan > tfplan.log || true'
+                }
+            }
+        }
+
+        stage('Approve Infra Creation?') {
+            steps {
+                script {
+                    // Check if there are changes
+                    def changes = sh(script: "grep -q 'No changes. Infrastructure is up-to-date.' ${TF_WORKDIR}/tfplan.log || echo 'changes'", returnStdout: true).trim()
+                    
+                    if (changes == "changes") {
+                        input message: "Terraform wants to create/update resources. Proceed with apply?", ok: "Yes, Apply"
+                    } else {
+                        echo "No infra changes detected. Skipping apply."
+                        currentBuild.description = "Skipped Terraform apply (infra up-to-date)"
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Apply') {
+            when {
+                expression {
+                    sh(script: "grep -q 'No changes. Infrastructure is up-to-date.' ${TF_WORKDIR}/tfplan.log && echo false || echo true", returnStdout: true).trim() == "true"
+                }
+            }
+            steps {
+                dir("${TF_WORKDIR}") {
+                    sh 'terraform apply -auto-approve tfplan'
+                }
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                sh """
-                    docker build -t ${DOCKER_HUB_REPO}:${IMAGE_TAG} .
-                """
+                sh "docker build -t ${DOCKER_IMAGE} ."
             }
         }
 
-        stage('Push Docker Image') {
+        stage('Push to DockerHub') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', 
-                                                 usernameVariable: 'DOCKER_USER', 
-                                                 passwordVariable: 'DOCKER_PASS')]) {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh """
                         echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-                        docker push ${DOCKER_HUB_REPO}:${IMAGE_TAG}
+                        docker push ${DOCKER_IMAGE}
                     """
                 }
             }
         }
 
-        stage('Update ECS Service') {
+        stage('Deploy to ECS') {
             steps {
                 sh """
-                    # Get current task definition ARN
-                    TASK_DEF_ARN=\$(aws ecs describe-services \
-                        --cluster ${ECS_CLUSTER} \
-                        --services ${ECS_SERVICE} \
-                        --query 'services[0].taskDefinition' \
-                        --output text)
-
-                    echo "Current Task Definition ARN: \$TASK_DEF_ARN"
-
-                    # Get container definitions from current task
-                    CONTAINER_DEF=\$(aws ecs describe-task-definition \
-                        --task-definition \$TASK_DEF_ARN \
-                        --query 'taskDefinition.containerDefinitions' \
-                        --output json)
-
-                    # Register new task definition with updated image
-                    NEW_TASK_DEF_ARN=\$(aws ecs register-task-definition \
-                        --family ${TASK_FAMILY} \
-                        --network-mode awsvpc \
-                        --requires-compatibilities FARGATE \
-                        --cpu 256 \
-                        --memory 512 \
-                        --container-definitions "\$(echo \$CONTAINER_DEF | jq '.[0].image=\"${DOCKER_HUB_REPO}:${IMAGE_TAG}\"') " \
-                        --query 'taskDefinition.taskDefinitionArn' \
-                        --output text)
-
-                    echo "New Task Definition ARN: \$NEW_TASK_DEF_ARN"
-
-                    # Update ECS service
                     aws ecs update-service \
-                        --cluster ${ECS_CLUSTER} \
-                        --service ${ECS_SERVICE} \
-                        --task-definition \$NEW_TASK_DEF_ARN \
+                        --cluster ${env.CLUSTER_NAME} \
+                        --service ${env.SERVICE_NAME} \
                         --force-new-deployment
                 """
             }
-        }
-    }
-
-    post {
-        success {
-            echo "Deployment completed successfully! 🎉"
-        }
-        failure {
-            echo "Pipeline failed ❌"
         }
     }
 }
