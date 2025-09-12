@@ -1,10 +1,16 @@
 pipeline {
     agent any
 
+    parameters {
+        choice(name: 'TERRAFORM_ACTION', choices: ['apply', 'destroy', 'skip'], description: 'Choose Terraform action')
+    }
+
     environment {
         AWS_DEFAULT_REGION = "ap-south-1"
-        TF_WORKDIR = "terraform" 
+        TF_WORKDIR = "terraform"
         DOCKER_IMAGE = "saravana2002/myapp:${BUILD_NUMBER}"
+        CLUSTER_NAME = "adq-ecs-cluster"   // Update with your ECS cluster name
+        SERVICE_NAME = "adq-service"       // Update with your ECS service name
     }
 
     stages {
@@ -15,58 +21,45 @@ pipeline {
             }
         }
 
-        stage('Terraform Init') {
+        stage('Terraform') {
             steps {
                 dir("${TF_WORKDIR}") {
-                    sh 'terraform init'
-                }
-            }
-        }
+                    script {
+                        if (params.TERRAFORM_ACTION == 'skip') {
+                            echo "Skipping Terraform stage as requested."
+                        } else {
+                            sh 'terraform init'
 
-        stage('Terraform Plan') {
-            steps {
-                dir("${TF_WORKDIR}") {
-                    sh 'terraform plan -out=tfplan > tfplan.log || true'
-                }
-            }
-        }
-
-        stage('Approve Infra Creation?') {
-            steps {
-                script {
-                    // Check if there are changes
-                    def changes = sh(script: "grep -q 'No changes. Infrastructure is up-to-date.' ${TF_WORKDIR}/tfplan.log || echo 'changes'", returnStdout: true).trim()
-                    
-                    if (changes == "changes") {
-                        input message: "Terraform wants to create/update resources. Proceed with apply?", ok: "Yes, Apply"
-                    } else {
-                        echo "No infra changes detected. Skipping apply."
-                        currentBuild.description = "Skipped Terraform apply (infra up-to-date)"
+                            if (params.TERRAFORM_ACTION == 'apply') {
+                                sh 'terraform plan -out=tfplan > tfplan.log || true'
+                                
+                                // Ask for approval if there are changes
+                                def changes = sh(script: "grep -q 'No changes. Infrastructure is up-to-date.' tfplan.log || echo 'changes'", returnStdout: true).trim()
+                                if (changes == "changes") {
+                                    input message: "Terraform wants to create/update resources. Proceed with apply?", ok: "Yes, Apply"
+                                    sh 'terraform apply -auto-approve tfplan'
+                                } else {
+                                    echo "No infra changes detected. Skipping apply."
+                                }
+                            } else if (params.TERRAFORM_ACTION == 'destroy') {
+                                input message: "Are you sure you want to DESTROY all infra?", ok: "Yes, Destroy"
+                                sh 'terraform destroy -auto-approve'
+                            }
+                        }
                     }
                 }
             }
         }
 
-        stage('Terraform Apply') {
-            when {
-                expression {
-                    sh(script: "grep -q 'No changes. Infrastructure is up-to-date.' ${TF_WORKDIR}/tfplan.log && echo false || echo true", returnStdout: true).trim() == "true"
-                }
-            }
-            steps {
-                dir("${TF_WORKDIR}") {
-                    sh 'terraform apply -auto-approve tfplan'
-                }
-            }
-        }
-
         stage('Build Docker Image') {
+            when { expression { params.TERRAFORM_ACTION != 'destroy' } }
             steps {
                 sh "docker build -t ${DOCKER_IMAGE} ."
             }
         }
 
         stage('Push to DockerHub') {
+            when { expression { params.TERRAFORM_ACTION != 'destroy' } }
             steps {
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh """
@@ -78,6 +71,7 @@ pipeline {
         }
 
         stage('Deploy to ECS') {
+            when { expression { params.TERRAFORM_ACTION != 'destroy' } }
             steps {
                 sh """
                     aws ecs update-service \
@@ -86,6 +80,15 @@ pipeline {
                         --force-new-deployment
                 """
             }
+        }
+    }
+
+    post {
+        success {
+            echo "Pipeline completed successfully ✅"
+        }
+        failure {
+            echo "Pipeline failed ❌"
         }
     }
 }
