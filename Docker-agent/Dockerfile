@@ -1,19 +1,30 @@
-# Use official Node.js LTS as base
-FROM node:18-bullseye
+# Base Ubuntu for maximum compatibility
+FROM ubuntu:22.04
 
-# Install dependencies for Terraform, AWS CLI, Docker, Java 17, and other utils
+# Avoid prompts during install
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install Java, Node.js, Python, Terraform dependencies, Docker, and utils
 RUN apt-get update && apt-get install -y \
-    unzip \
+    openjdk-17-jdk \
     curl \
     git \
+    unzip \
     python3 \
     python3-pip \
     gnupg \
     lsb-release \
     software-properties-common \
     docker.io \
-    openjdk-17-jdk \
+    nodejs \
+    npm \
+    sudo \
+    ssh \
     && rm -rf /var/lib/apt/lists/*
+
+# Set JAVA_HOME
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV PATH="$JAVA_HOME/bin:$PATH:/workspace/node_modules/.bin"
 
 # Install Terraform
 ARG TERRAFORM_VERSION=1.6.0
@@ -28,12 +39,14 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2
     && ./aws/install \
     && rm -rf awscliv2.zip aws
 
-# Set JAVA_HOME
-ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-ENV PATH="$JAVA_HOME/bin:$PATH:/workspace/node_modules/.bin"
+# Add Jenkins user with sudo
+RUN useradd -m -d /var/lib/jenkins -s /bin/bash jenkins \
+    && echo 'jenkins:jenkins' | chpasswd \
+    && echo 'jenkins ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
 
 # Set workdir
 WORKDIR /workspace
+USER jenkins
 
-# Default command (keep container alive)
+# Keep container alive
 CMD ["bash"]
