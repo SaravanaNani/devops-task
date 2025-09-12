@@ -1,3 +1,12 @@
-variable "project_name" {
-  default = "devops-task"
-}
+variable "aws_region" { type = string, default = "ap-south-1" }
+variable "project" { type = string, default = "devops-task" }
+variable "ecs_cluster_name" { type = string, default = "adq-ecs-cluster" }
+variable "ecs_service_name" { type = string, default = "adq-service" }
+variable "task_family" { type = string, default = "adq-task" }
+variable "docker_image" { type = string, default = "saravana2002/devops-task:latest" }
+variable "container_name" { type = string, default = "adq-container" }
+variable "container_port" { type = number, default = 3000 }
+variable "health_path" { type = string, default = "/" }
+variable "cpu" { type = string, default = "256" }
+variable "memory" { type = string, default = "512" }
+variable "desired_count" { type = number, default = 1 }
