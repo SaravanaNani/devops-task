@@ -56,7 +56,6 @@ This project demonstrates a full CI/CD pipeline using **Jenkins**, **Terraform**
    * AmazonEC2FullAccess
    * AmazonECS\_FullAccess
    * AmazonS3FullAccess
-   * AutoScalingFullAccess
    * IAMFullAccess
 
    **Custom Policies:**
