@@ -1,5 +1,5 @@
 
-# DevOps CI/CD Pipeline Setup with Jenkins, Terraform, and AWS ECS
+# DevOps CI/CD Pipeline Setup with Jenkins, Terraform, and AWS ECS.
 
 This project demonstrates a full CI/CD pipeline using **Jenkins**, **Terraform**, **Docker**, and **AWS ECS**, with proper role-based access, CloudWatch monitoring, and AutoScaling.
 
